@@ -20,7 +20,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Siganture Circle
+  m_Name: Signature Circle
   m_Shader: {fileID: -6465566751694194690, guid: 1ccd54155e290f345bcf347cac0d51ea,
     type: 3}
   m_ShaderKeywords: _NORMALMAP_TANGENT_SPACE
