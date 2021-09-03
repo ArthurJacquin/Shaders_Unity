@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -19,15 +20,6 @@ public class LiquidEffect : VolumeComponent
     [Range(0.0001f, 0.01f), Tooltip("Accuracy of the raymarching")]
     public ClampedFloatParameter accuracy = new ClampedFloatParameter(0.001f, 0.0001f, 0.01f);
 
-    [Range(0f, 4f), Tooltip("Intensity of the shadows cast by raymarched objects")]
-    public ClampedFloatParameter shadowIntensity = new ClampedFloatParameter(1, 0f, 4f);
-
-    [Tooltip("Shadow propagation")]
-    public Vector2Parameter shadowDistance = new Vector2Parameter(new Vector2(0.5f, 50f));
-
-    [Range(1f, 10f), Tooltip("Intensity of the shadows cast by raymarched objects")]
-    public ClampedFloatParameter shadowPenumbra = new ClampedFloatParameter(4.5f, 1f, 10f);
-
     [Range(0f, 100f), Tooltip("Glossiness of the liquid")]
     public ClampedFloatParameter glossiness = new ClampedFloatParameter(50f, 0f, 100f);
 
@@ -36,6 +28,9 @@ public class LiquidEffect : VolumeComponent
 
     [Range(0f, 1f), Tooltip("Smoothness of the liquid")]
     public ClampedFloatParameter smoothness = new ClampedFloatParameter(0f, 0f, 1f);
+
+    [Range(0f, 2f), Tooltip("Smoothness between spheres")]
+    public ClampedFloatParameter sphereSmooth = new ClampedFloatParameter(1.5f, 0f, 2f);
 }
 
 // Define the renderer for the custom post processing effect
@@ -48,7 +43,11 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
     // The postprocessing material
     private Material m_Material;
     private Camera cam;
-    private Transform sphere;
+
+    //Spheres
+    int nbActiveSphere;
+    private Texture2D spheresData;
+
 
     // The ids of the shader variables
     static class ShaderIDs
@@ -61,12 +60,10 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
         internal readonly static int Accuracy = Shader.PropertyToID("_accuracy");
 
         //Shperes
-        internal readonly static int Pos = Shader.PropertyToID("pos");
-
-        //Shadows
-        internal readonly static int ShadowIntensity = Shader.PropertyToID("_shadowIntensity");
-        internal readonly static int ShadowDistance = Shader.PropertyToID("_shadowDistance");
-        internal readonly static int ShadowPenumbra = Shader.PropertyToID("_shadowPenumbra");
+        internal readonly static int SpheresData = Shader.PropertyToID("_spheresData");
+        internal readonly static int NbSphere = Shader.PropertyToID("_nbSphere");
+        internal readonly static int PoolSize = Shader.PropertyToID("_poolSize");
+        internal readonly static int SphereSmooth = Shader.PropertyToID("_sphereSmooth");
 
         //Lighting
         internal readonly static int Glossiness = Shader.PropertyToID("_glossiness");
@@ -86,7 +83,6 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
     {
         m_Material = CoreUtils.CreateEngineMaterial("Hidden/Raymarching/Liquid");
         cam = Camera.main;
-        sphere = cam.transform.GetChild(0);
     }
 
     // Called for each camera/injection point pair on each frame. Return true if the effect should be rendered for this camera.
@@ -106,19 +102,37 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
         // set material properties
         if (m_Material != null)
         {
+            //Spheres
+            if(spheresData == null)
+            {
+                //Init spheres
+                spheresData = new Texture2D(LiquidPoolManager.Instance.pool.Count, 1, TextureFormat.RGBAFloat, false);
+                spheresData.filterMode = FilterMode.Point;
+                spheresData.wrapMode = TextureWrapMode.Clamp;
+            }
+
+            nbActiveSphere = 0;
+            for (int i = 0; i < LiquidPoolManager.Instance.poolSize; i++)
+            {
+                if (LiquidPoolManager.Instance.pool[i].gameObject.activeSelf)
+                {
+                    Vector3 pos = LiquidPoolManager.Instance.pool[i].position;
+                    spheresData.SetPixel(nbActiveSphere, 0, new Color(pos.x * 0.001f, pos.y * 0.001f, pos.z * 0.001f, LiquidPoolManager.Instance.pool[i].localScale.x * 0.001f));
+                    nbActiveSphere++;
+                }
+            }
+            spheresData.Apply();
+
             m_Material.SetFloat(ShaderIDs.Intensity, m_VolumeComponent.intensity.value);
             m_Material.SetMatrix(ShaderIDs.CamInvProj, cam.projectionMatrix.inverse);
             m_Material.SetFloat(ShaderIDs.MaxDistance, m_VolumeComponent.maxDistance.value);
             m_Material.SetInt(ShaderIDs.MaxIterations, m_VolumeComponent.maxIterations.value);
             m_Material.SetFloat(ShaderIDs.Accuracy, m_VolumeComponent.accuracy.value);
 
-            //Spheres
-            m_Material.SetVector(ShaderIDs.Pos, sphere.position);
-
-            //Shadows
-            m_Material.SetFloat(ShaderIDs.ShadowIntensity, m_VolumeComponent.shadowIntensity.value);
-            m_Material.SetVector(ShaderIDs.ShadowDistance, m_VolumeComponent.shadowDistance.value);
-            m_Material.SetFloat(ShaderIDs.ShadowPenumbra, m_VolumeComponent.shadowPenumbra.value);
+            m_Material.SetTexture(ShaderIDs.SpheresData, spheresData);
+            m_Material.SetInt(ShaderIDs.NbSphere, nbActiveSphere);
+            m_Material.SetInt(ShaderIDs.PoolSize, LiquidPoolManager.Instance.poolSize);
+            m_Material.SetFloat(ShaderIDs.SphereSmooth, m_VolumeComponent.sphereSmooth.value);
 
             //Lighting
             m_Material.SetFloat(ShaderIDs.Glossiness, m_VolumeComponent.glossiness.value);
@@ -130,36 +144,5 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
         cmd.SetGlobalTexture(ShaderIDs.Input, source);
         // draw a fullscreen triangle to the destination
         CoreUtils.DrawFullScreen(cmd, m_Material, destination);
-    }
-
-    /// \brief Stores the normalized rays representing the camera frustum in a 4x4 matrix.  Each row is a vector.
-    /// 
-    /// The following rays are stored in each row (in eyespace, not worldspace):
-    /// Top Left corner:     row=0
-    /// Top Right corner:    row=1
-    /// Bottom Right corner: row=2
-    /// Bottom Left corner:  row=3
-    private Matrix4x4 GetFrustumCorners(Camera cam)
-    {
-        float camAspect = cam.aspect;
-
-        Matrix4x4 frustumCorners = Matrix4x4.identity;
-
-        float fov = Mathf.Tan((cam.fieldOfView * 0.5f) * Mathf.Deg2Rad);
-
-        Vector3 toRight = Vector3.right * fov * camAspect;
-        Vector3 toTop = Vector3.up * fov;
-
-        Vector3 topLeft = (-Vector3.forward - toRight + toTop);
-        Vector3 topRight = (-Vector3.forward + toRight + toTop);
-        Vector3 bottomRight = (-Vector3.forward + toRight - toTop);
-        Vector3 bottomLeft = (-Vector3.forward - toRight - toTop);
-
-        frustumCorners.SetRow(0, topLeft);
-        frustumCorners.SetRow(1, topRight);
-        frustumCorners.SetRow(2, bottomRight);
-        frustumCorners.SetRow(3, bottomLeft);
-
-        return frustumCorners;
     }
 }

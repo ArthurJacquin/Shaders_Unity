@@ -20,12 +20,10 @@ Shader "Hidden/Raymarching/Liquid"
         uniform float _accuracy;
 
         //Spheres
-        uniform float3 pos;
-
-        //Shadows
-        uniform float _shadowIntensity;
-        uniform float2 _shadowDistance;
-        uniform float _shadowPenumbra;
+        uniform sampler1D _spheresData;
+        uniform int _nbSphere;
+        uniform int _poolSize;
+        uniform float _sphereSmooth;
 
         //Lighting
         uniform float _glossiness;
@@ -73,10 +71,23 @@ Shader "Hidden/Raymarching/Liquid"
 
 
         //Distance
+        //Return a float4 with color in XYZ and distance in W
         float4 GetDist(float3 p)
         {
-            float4 sphereDist = float4(float3(1, 1, 1), sdSphere(p - pos, 1.0)); //TODO : color
-            return sphereDist;
+            float q = 1.0f / float(_poolSize - 1);
+            //TODO : color
+            float4 sphereDist = float4(float3(1, 1, 1), sdSphere(p - tex1Dlod(_spheresData, 0).xyz * 1000.0, tex1Dlod(_spheresData, 0).w * 1000.0)); 
+            
+            float4 result = sphereDist;
+            for (int i = 1; i < _nbSphere; i++)
+            {
+                //Distance
+                sphereDist = float4(float3(1, 1, 1), sdSphere(p - tex1Dlod(_spheresData, i * q).xyz * 1000.0, tex1Dlod(_spheresData, i * q).w * 1000.0));
+
+                result = opUS(result, sphereDist, _sphereSmooth);
+            }
+            
+            return result;
         }
 
         //Raymarch step
@@ -114,42 +125,6 @@ Shader "Hidden/Raymarching/Liquid"
                 GetDist(p - e.yyx).w);
 
             return normalize(n);
-        }
-
-        //Shadows
-        float softShadow(float3 ro, float3 rd, float minT, float maxT, float k)
-        {
-            float result = 1.0;
-
-            for (float t = minT; t < maxT;)
-            {
-                float h = GetDist(ro + rd * t).w;
-                if (h < 0.001)
-                {
-                    return 0.0;
-                }
-                result = min(result, k * h / t);
-
-                t += h;
-            }
-
-            return result;
-        }
-
-        float hardShadow(float3 ro, float3 rd, float minT, float maxT)
-        {
-            for (float t = minT; t < maxT;)
-            {
-                float h = GetDist(ro + rd * t).w;
-                if (h < 0.001)
-                {
-                    return 0.0;
-                }
-
-                t += h;
-            }
-
-            return 1.0;
         }
 
         //Shading
@@ -202,6 +177,9 @@ Shader "Hidden/Raymarching/Liquid"
             
             float2 uv = UnityStereoTransformScreenSpaceTex(input.uv);
             float4 sceneColor = LOAD_TEXTURE2D_X(_MainTex, uv * _ScreenSize.xy);
+
+            if (_nbSphere == 0) //No sphere -> do nothing
+                return sceneColor;
 
             //Setup ray
             float3 rayOrigin = _WorldSpaceCameraPos; // Ray Origin/Camera
