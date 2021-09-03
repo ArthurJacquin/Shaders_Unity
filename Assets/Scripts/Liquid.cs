@@ -30,6 +30,12 @@ public class LiquidEffect : VolumeComponent
 
     [Range(0f, 100f), Tooltip("Glossiness of the liquid")]
     public ClampedFloatParameter glossiness = new ClampedFloatParameter(50f, 0f, 100f);
+
+    [Range(0f, 1f), Tooltip("Metallicness of the liquid")]
+    public ClampedFloatParameter metallic = new ClampedFloatParameter(0f, 0f, 1f);
+
+    [Range(0f, 1f), Tooltip("Smoothness of the liquid")]
+    public ClampedFloatParameter smoothness = new ClampedFloatParameter(0f, 0f, 1f);
 }
 
 // Define the renderer for the custom post processing effect
@@ -64,6 +70,8 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
 
         //Lighting
         internal readonly static int Glossiness = Shader.PropertyToID("_glossiness");
+        internal readonly static int Metallic = Shader.PropertyToID("_metallic");
+        internal readonly static int Smoothness = Shader.PropertyToID("_smoothness");
     }
 
     // By default, the effect is visible in the scene view, but we can change that here.
@@ -114,6 +122,8 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
 
             //Lighting
             m_Material.SetFloat(ShaderIDs.Glossiness, m_VolumeComponent.glossiness.value);
+            m_Material.SetFloat(ShaderIDs.Metallic, m_VolumeComponent.metallic.value);
+            m_Material.SetFloat(ShaderIDs.Smoothness, m_VolumeComponent.smoothness.value);
 
         }
         // set source texture

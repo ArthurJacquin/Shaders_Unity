@@ -4,6 +4,7 @@ Shader "Hidden/Raymarching/Liquid"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+        #include "Packages/com.unity.render-pipelines.universal/Shaders/LitInput.hlsl"
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
         #include "Assets/Shaders/Raymarching/DistanceFunctions.hlsl"
 
@@ -28,6 +29,8 @@ Shader "Hidden/Raymarching/Liquid"
 
         //Lighting
         uniform float _glossiness;
+        uniform float _metallic;
+        uniform float _smoothness;
 
         //Inputs
         struct Attributes
@@ -38,26 +41,36 @@ Shader "Hidden/Raymarching/Liquid"
 
         struct Varyings
         {
-            float4 positionCS : SV_POSITION;
-            float2 texcoord   : TEXCOORD0;
-            float3 viewVector : TEXCOORD1;
+            float2 uv                       : TEXCOORD0;
+            float3 viewVector               : TEXCOORD1;
+            float4 positionCS               : SV_POSITION;
+            UNITY_VERTEX_INPUT_INSTANCE_ID
             UNITY_VERTEX_OUTPUT_STEREO
         };
 
-        Varyings Vert(Attributes input)
+        /*void InitializeInputData(Varyings input, float3 posWS, half3 normalWS, half3 viewDirWS, out InputData inputData)
         {
-            Varyings output;
-            UNITY_SETUP_INSTANCE_ID(input);
-            UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-            
-            output.positionCS = GetFullScreenTriangleVertexPosition(input.vertexID);
-            output.texcoord = GetFullScreenTriangleTexCoord(input.vertexID);
+            inputData = (InputData)0;
 
-            output.viewVector = mul(_CamInvProj, float4(output.texcoord * 2 - 1, 0, 1));
-            output.viewVector = mul(UNITY_MATRIX_I_V, float4(output.viewVector, 0));
+            inputData.positionWS = posWS;
+            inputData.normalWS = NormalizeNormalPerPixel(normalWS);
+            inputData.viewDirectionWS = viewDirWS;
 
-            return output;
-        }
+#if defined(REQUIRES_VERTEX_SHADOW_COORD_INTERPOLATOR)
+            inputData.shadowCoord = input.shadowCoord;
+#elif defined(MAIN_LIGHT_CALCULATE_SHADOWS)
+            inputData.shadowCoord = TransformWorldToShadowCoord(inputData.positionWS);
+#else
+            inputData.shadowCoord = float4(0, 0, 0, 0);
+#endif
+
+            inputData.fogCoord = input.fogFactorAndVertexLight.x;
+            inputData.vertexLighting = input.fogFactorAndVertexLight.yzw;
+            inputData.bakedGI = SAMPLE_GI(input.lightmapUV, input.vertexSH, inputData.normalWS);
+            inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV(input.positionCS);
+            inputData.shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+        }*/
+
 
         //Distance
         float4 GetDist(float3 p)
@@ -67,15 +80,15 @@ Shader "Hidden/Raymarching/Liquid"
         }
 
         //Raymarch step
-        bool RayMarch(float3 ro, float3 rd, float depth, inout float d)
+        bool RayMarch(float3 ro, float3 rd, float depth, inout float3 p)
         {
-            d = 0.; //Distane Origin
+            float d = 0.; //Distane Origin
             for (int i = 0; i < _maxIterations; i++)
             {
                 if (d > _maxDistance || d >= depth) //No hit
                     return false;
 
-                float3 p = ro + rd * d; //New position
+                p = ro + rd * d; //New position
 
                 float ds = GetDist(p).w; // ds is Distance Scene
                 if (ds < _accuracy) //Hit
@@ -140,36 +153,54 @@ Shader "Hidden/Raymarching/Liquid"
         }
 
         //Shading
-        float3 Shading(float3 p, float3 n, float3 c)
+        float3 Shading(float3 p, float3 n, float3 viewDir, float3 c)
         {
-            float3 result;
-
-            //Diffuse color
-            float3 color = c.rgb;
-
-            //Directional light
             Light mainLight = GetMainLight();
-            float3 light = (dot(-mainLight.direction, n) * 0.5 + 0.5) * mainLight.color;
+            half alpha = 1;
 
-            // GGX NDF = > Specular
-            float3 halfDir = normalize(mainLight.direction + _WorldSpaceCameraPos);
-            float specAngle = max(dot(halfDir, n), 0.0);
-            float specular = pow(specAngle, _glossiness * 10);
+            BRDFData brdfData;
+            InitializeBRDFData(c, _metallic, c, _smoothness, alpha, brdfData);
 
-            //Shadows
-            float shadow = softShadow(p, -mainLight.direction, _shadowDistance.x, _shadowDistance.y, _shadowPenumbra) * 0.5 + 0.5;
-            shadow = max(0.0, pow(shadow, _shadowIntensity));
+            half3 color = LightingPhysicallyBased(brdfData, mainLight, n, viewDir, false);
 
-            shadow = hardShadow(p, -mainLight.direction, _shadowDistance.x, _shadowDistance.y);
-            result = color * light * shadow + (specular * c.rgb);
-            return result;
+            //TODO : better shading + GI
+            //SurfaceData surfaceData;
+            //InitializeStandardLitSurfaceData(input.uv, surfaceData);
+            //
+            //InputData inputData;
+            //InitializeInputData(input, p, n, viewDir, inputData);
+            //
+            //half4 color = UniversalFragmentPBR(inputData, surfaceData);
+
+            return color;
+        }
+
+///////////////////////////////////////////////////////////////////////////////
+//                  Vertex and Fragment functions                            //
+///////////////////////////////////////////////////////////////////////////////
+
+        Varyings Vert(Attributes input)
+        {
+            Varyings output = (Varyings)0;
+
+            UNITY_SETUP_INSTANCE_ID(input);
+            UNITY_TRANSFER_INSTANCE_ID(input, output);
+            UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+            
+            output.positionCS = GetFullScreenTriangleVertexPosition(input.vertexID);
+            output.uv = GetFullScreenTriangleTexCoord(input.vertexID);
+
+            output.viewVector = mul(_CamInvProj, float4(output.uv * 2 - 1, 0, 1));
+            output.viewVector = mul(UNITY_MATRIX_I_V, float4(output.viewVector, 0));
+
+            return output;
         }
 
         float4 Frag(Varyings input) : SV_Target
         {
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
             
-            float2 uv = UnityStereoTransformScreenSpaceTex(input.texcoord);
+            float2 uv = UnityStereoTransformScreenSpaceTex(input.uv);
             float4 sceneColor = LOAD_TEXTURE2D_X(_MainTex, uv * _ScreenSize.xy);
 
             //Setup ray
@@ -178,11 +209,11 @@ Shader "Hidden/Raymarching/Liquid"
             float3 rayDir = input.viewVector / viewLength; // Ray Direction
             
             // Depth
-            float depth = SampleSceneDepth(input.texcoord);
+            float depth = SampleSceneDepth(input.uv);
             depth = LinearEyeDepth(depth, _ZBufferParams) * viewLength;
 
             //Raymarch
-            float HitPos; 
+            float3 HitPos; 
             float3 color = float3(0.08, 0.81, 1);
             bool hit = RayMarch(rayOrigin, rayDir, depth, HitPos);
 
@@ -191,7 +222,7 @@ Shader "Hidden/Raymarching/Liquid"
             {
                 //Shading
                 float3 n = GetNormal(HitPos);
-                float3 s = Shading(HitPos, n, color);
+                float3 s = Shading(HitPos, n, rayDir, color);
                 result = float4(s, 1);
             }
             else 
