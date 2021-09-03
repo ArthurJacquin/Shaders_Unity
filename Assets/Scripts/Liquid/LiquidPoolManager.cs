@@ -32,6 +32,12 @@ public class LiquidPoolManager : MonoBehaviour
         for (int i = 0; i < poolParent.childCount; i++)
         {
             pool.Add(poolParent.GetChild(i));
+            pool[i].position = poolParent.position + new Vector3(0, 0.05f, 0) * i;
         }
+    }
+
+    private void Update()
+    {
+        
     }
 }
