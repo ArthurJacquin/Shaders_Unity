@@ -34,7 +34,7 @@ public class LiquidEffect : VolumeComponent
 }
 
 // Define the renderer for the custom post processing effect
-[CustomPostProcess("Liquid", CustomPostProcessInjectionPoint.AfterPostProcess)]
+[CustomPostProcess("Liquid", CustomPostProcessInjectionPoint.BeforePostProcess)]
 public class LiquidEffectRenderer : CustomPostProcessRenderer
 {
     // A variable to hold a reference to the corresponding volume component
@@ -103,23 +103,19 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
         if (m_Material != null)
         {
             //Spheres
-            if(spheresData == null)
+            if(spheresData == null && LiquidPoolManager.Instance.poolSize != 0)
             {
                 //Init spheres
-                spheresData = new Texture2D(LiquidPoolManager.Instance.pool.Count, 1, TextureFormat.RGBAFloat, false);
+                spheresData = new Texture2D(LiquidPoolManager.Instance.poolSize, 1, TextureFormat.RGBAFloat, false);
                 spheresData.filterMode = FilterMode.Point;
                 spheresData.wrapMode = TextureWrapMode.Clamp;
             }
 
-            nbActiveSphere = 0;
-            for (int i = 0; i < LiquidPoolManager.Instance.poolSize; i++)
+            //Set spheres position and scale into the texture
+            for (int i = 0; i < LiquidPoolManager.Instance.activeSpheres.Count; i++)
             {
-                if (LiquidPoolManager.Instance.pool[i].gameObject.activeSelf)
-                {
-                    Vector3 pos = LiquidPoolManager.Instance.pool[i].position;
-                    spheresData.SetPixel(nbActiveSphere, 0, new Color(pos.x * 0.001f, pos.y * 0.001f, pos.z * 0.001f, LiquidPoolManager.Instance.pool[i].localScale.x * 0.001f));
-                    nbActiveSphere++;
-                }
+                Vector3 pos = LiquidPoolManager.Instance.activeSpheres[i].position;
+                spheresData.SetPixel(i, 0, new Color(pos.x * 0.001f, pos.y * 0.001f, pos.z * 0.001f, LiquidPoolManager.Instance.activeSpheres[i].localScale.x * 0.001f));
             }
             spheresData.Apply();
 
@@ -129,8 +125,9 @@ public class LiquidEffectRenderer : CustomPostProcessRenderer
             m_Material.SetInt(ShaderIDs.MaxIterations, m_VolumeComponent.maxIterations.value);
             m_Material.SetFloat(ShaderIDs.Accuracy, m_VolumeComponent.accuracy.value);
 
+            //Send spheres data to the shader
             m_Material.SetTexture(ShaderIDs.SpheresData, spheresData);
-            m_Material.SetInt(ShaderIDs.NbSphere, nbActiveSphere);
+            m_Material.SetInt(ShaderIDs.NbSphere, LiquidPoolManager.Instance.activeSpheres.Count);
             m_Material.SetInt(ShaderIDs.PoolSize, LiquidPoolManager.Instance.poolSize);
             m_Material.SetFloat(ShaderIDs.SphereSmooth, m_VolumeComponent.sphereSmooth.value);
 

@@ -131,7 +131,7 @@ Shader "Hidden/Raymarching/Liquid"
         float3 Shading(float3 p, float3 n, float3 viewDir, float3 c)
         {
             Light mainLight = GetMainLight();
-            half alpha = 1;
+            half alpha = 0.5;
 
             BRDFData brdfData;
             InitializeBRDFData(c, _metallic, c, _smoothness, alpha, brdfData);
@@ -201,7 +201,7 @@ Shader "Hidden/Raymarching/Liquid"
                 //Shading
                 float3 n = GetNormal(HitPos);
                 float3 s = Shading(HitPos, n, rayDir, color);
-                result = float4(s, 1);
+                result = float4(s, 0.5);
             }
             else 
             {
